@@ -1,5 +1,6 @@
 const Shop = require('../models/Shop');
 const Product = require('../models/Product');
+const { User } = require('../models/User');
 const { uploadToCloudinary } = require('../config/cloudinary');
 
 // Validation helper
@@ -71,6 +72,9 @@ exports.createShop = async (req, res) => {
 
     await shop.save();
 
+    // Update user's hasShop flag
+    await User.findByIdAndUpdate(req.user.id, { hasShop: true });
+
     res.status(201).json({
       success: true,
       data: { shop },
@@ -136,29 +140,38 @@ exports.getAllShops = async (req, res) => {
 
 exports.getUserShop = async (req, res) => {
   try {
-      const shop = await Shop.findOne({ owner: req.user.id })
-          .populate('categories', 'name');
+    const shop = await Shop.findOne({ owner: req.user.id })
+      .populate('categories', 'name');
 
-      if (!shop) {
-          return res.status(404).json({
-              success: false,
-              errors: ['No shop found for this user'],
-              data: null
-          });
-      }
-
-      return res.json({
-          success: true,
-          errors: [],
-          data: { shop }
+    if (!shop) {
+      return res.status(404).json({
+        success: false,
+        errors: ['No shop found for this user'],
+        data: null
       });
+    }
+
+    if (!req.user.hasShop) {
+      await User.findByIdAndUpdate(req.user.id, { hasShop: true });
+    }
+     // Calculate actual metrics
+    const totalProducts = await Product.countDocuments({ shop: shop._id });
+    
+    // Update the shop object with real metrics
+    shop.metrics.totalProducts = totalProducts;
+    
+    return res.json({
+      success: true,
+      errors: [],
+      data: { shop }
+    });
   } catch (error) {
-      console.error('Get user shop error:', error);
-      return res.status(500).json({
-          success: false,
-          errors: [error.message],
-          data: null
-      });
+    console.error('Get user shop error:', error);
+    return res.status(500).json({
+      success: false,
+      errors: [error.message],
+      data: null
+    });
   }
 };
 
@@ -262,6 +275,9 @@ exports.deleteShop = async (req, res) => {
         data: null
       });
     }
+
+    // Update user's hasShop flag
+    await User.findByIdAndUpdate(req.user.id, { hasShop: false });
 
     res.json({
       success: true,

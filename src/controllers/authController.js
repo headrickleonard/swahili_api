@@ -9,7 +9,7 @@ const rateLimit = require('express-rate-limit');
 // Rate Limiting Middleware
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // limit each IP to 5 login attempts
+  max: 100, // limit each IP to 100 login attempts
   message: {
     success: false,
     errors: ['Too many login attempts, please try again later'],
@@ -281,6 +281,7 @@ exports.loginUser = [
             username: user.username,
             email: user.email,
             userType: user.userType,
+            hasShop: user.hasShop,
             profile: {
               avatar: user.profile.avatar || null
             }

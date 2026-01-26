@@ -147,6 +147,10 @@ const userSchema = new mongoose.Schema({
       }
     }]
   },
+  hasShop: {
+    type: Boolean,
+    default: false
+  },
   metadata: {
     lastPasswordReset: Date,
     accountCreated: {

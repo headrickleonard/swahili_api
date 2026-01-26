@@ -57,6 +57,12 @@ exports.createProduct = async (req, res) => {
 
     await product.save();
 
+    // Update shop metrics - increment total products
+    await Shop.findByIdAndUpdate(
+      shop._id,
+      { $inc: { 'metrics.totalProducts': 1 } }
+    );
+
     res.status(201).json({
       success: true,
       data: { product },
@@ -70,11 +76,12 @@ exports.createProduct = async (req, res) => {
     });
   }
 };
+
 exports.getAllProducts = async (req, res) => {
   try {
     // Pagination parameters
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = parseInt(req.query.limit) || 30;
     const skipIndex = (page - 1) * limit;
 
     // Filtering and searching
@@ -122,21 +129,6 @@ exports.getAllProducts = async (req, res) => {
   }
 };
 
-// exports.getProductById = async (req, res) => {
-//   try {
-//     const product = await Product.findById(req.params.id)
-//       .populate('category', 'name')
-//       .populate('shop', 'name');
-    
-//     if (!product) {
-//       return res.status(404).json({ message: 'Product not found' });
-//     }
-    
-//     res.json(product);
-//   } catch (err) {
-//     res.status(500).json({ message: err.message });
-//   }
-// };
 
 exports.getProductById = async (req, res) => {
   try {
@@ -193,26 +185,62 @@ exports.updateProduct = async (req, res) => {
     );
 
     if (!product) {
-      return res.status(404).json({ message: 'Product not found' });
+      return res.status(404).json({
+        success: false,
+        errors: ['Product not found'],
+        data: null
+      });
     }
 
-    res.json(product);
+    res.json({
+      success: true,
+      data: { product },
+      errors: []
+    });
   } catch (err) {
-    res.status(400).json({ message: err.message });
+    res.status(400).json({
+      success: false,
+      errors: [err.message],
+      data: null
+    });
   }
 };
 
 exports.deleteProduct = async (req, res) => {
   try {
-    const product = await Product.findByIdAndDelete(req.params.id);
+    const product = await Product.findById(req.params.id);
 
     if (!product) {
-      return res.status(404).json({ message: 'Product not found' });
+      return res.status(404).json({
+        success: false,
+        errors: ['Product not found'],
+        data: null
+      });
     }
 
-    res.json({ message: 'Product deleted successfully' });
+    // Store shop ID before deleting
+    const shopId = product.shop;
+
+    // Delete the product
+    await Product.findByIdAndDelete(req.params.id);
+
+    // Update shop metrics - decrement total products
+    await Shop.findByIdAndUpdate(
+      shopId,
+      { $inc: { 'metrics.totalProducts': -1 } }
+    );
+
+    res.json({
+      success: true,
+      data: { message: 'Product deleted successfully' },
+      errors: []
+    });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({
+      success: false,
+      errors: [err.message],
+      data: null
+    });
   }
 };
 
