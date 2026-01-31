@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Socket.io Test</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+    <h1>Socket.io Test Client</h1>
+    <div id="status">Connecting...</div>
+    <div id="messages"></div>
+
+    <script>
+        // Connect to your server
+        const socket = io('http://localhost:5000');
+
+        const statusDiv = document.getElementById('status');
+        const messagesDiv = document.getElementById('messages');
+
+        socket.on('connect', () => {
+            statusDiv.innerHTML = 'Connected! Socket ID: ' + socket.id;
+            console.log('Connected:', socket.id);
+            
+            // Join room with a test user ID (replace with actual user ID)
+            const testUserId = '67995ae5c52ff1bf5af0dc9a'; // Use a real user ID from your DB
+            socket.emit('join', testUserId);
+            console.log('Joined room:', testUserId);
+        });
+
+        // Listen for new orders
+        socket.on('new_order', (data) => {
+            console.log('New Order:', data);
+            messagesDiv.innerHTML += `<p><strong>New Order:</strong> ${JSON.stringify(data)}</p>`;
+        });
+
+        // Listen for order status updates
+        socket.on('order_status_updated', (data) => {
+            console.log('Order Status Updated:', data);
+            messagesDiv.innerHTML += `<p><strong>Status Updated:</strong> ${JSON.stringify(data)}</p>`;
+        });
+
+        // Listen for new messages
+        socket.on('new_message', (data) => {
+            console.log('New Message:', data);
+            messagesDiv.innerHTML += `<p><strong>New Message:</strong> ${JSON.stringify(data)}</p>`;
+        });
+
+        socket.on('disconnect', () => {
+            statusDiv.innerHTML = 'Disconnected';
+            console.log('Disconnected');
+        });
+
+        socket.on('error', (error) => {
+            console.error('Socket error:', error);
+        });
+    </script>
+</body>
+</html>

@@ -59,9 +59,8 @@ exports.createOrder = async (req, res) => {
 
     // Calculate total amount
     const subtotal = product.price * quantity;
-    const tax = subtotal * 0.15;
-    const shippingCost = 0;
-    const totalAmount = subtotal + tax + shippingCost;
+    // const shippingCost = 0;
+    const totalAmount = subtotal;
 
     // Prepare order data
     const orderData = {
@@ -77,8 +76,6 @@ exports.createOrder = async (req, res) => {
       paymentMethod,
       amounts: {
         subtotal,
-        tax,
-        shipping: shippingCost,
         total: totalAmount
       },
       status: paymentMethod === 'mobile_money' ? 'pending_payment' : 'pending',
@@ -247,7 +244,6 @@ exports.getOrderById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Validate if id is a valid MongoDB ObjectId
     if (!isValidObjectId(id)) {
       return res.status(400).json({
         success: false,
@@ -364,7 +360,7 @@ exports.updateOrderStatus = async (req, res) => {
     }
 
     // Check authorization (only shop owner or admin can update status)
-    const isShopOwner = order.shop._id.toString() === req.user._id.toString();
+    const isShopOwner = order.shop.owner.equals(req.user._id);
     const isAdmin = req.user.userType === 'ADMIN';
     if (!isShopOwner && !isAdmin) {
       return res.status(403).json({
@@ -379,7 +375,7 @@ exports.updateOrderStatus = async (req, res) => {
       return res.status(400).json({
         success: false,
         data: null,
-        errors: [`Invalid status transition from ${order.paymentDetails.status} to ${status}`]
+        errors: [`Invalid status transition from ${order.status} to ${status}`]
       });
     }
 
@@ -743,7 +739,7 @@ exports.getMyShop = async (req, res) => {
     // Get recent orders
     const recentOrders = await Order.find({ shop: shop._id })
       .sort({ createdAt: -1 })
-      .limit(5)
+      // .limit(5)
       .populate('user', 'name')
       .populate('items.product', 'name image price');
 
