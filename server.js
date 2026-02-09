@@ -61,12 +61,14 @@ app.use('/api/v1/orders', require('./src/routes/orders'));
 app.use('/api/v1/ratings', require('./src/routes/ratings'));
 app.use('/api/v1/chat', require('./src/routes/chat'));
 app.use('/api/v1/notifications', require('./src/routes/notifications'));
-app.use('/api/v1/webhooks', webhookRoutes)
+// app.use('/api/v1/webhooks', webhookRoutes)
 app.use('/api/v1/profile', require('./src/routes/profile'));
 app.use('/api/v1/account', require('./src/routes/account'));
 app.use('/api/v1/wishlist', require('./src/routes/wishlist'));
 app.use('/api/v1/announcements', require('./src/routes/announcements'));
 app.use('/api/v1/webhooks', webhookRoutes);
+app.use('/api/v1/withdrawals', require('./src/routes/withdrawals'));
+
 
 // Error handling
 app.use(errorHandler);

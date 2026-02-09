@@ -131,7 +131,13 @@ const ShopSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now
-  }
+  },
+  wallet: {
+  currentBalance: { type: Number, default: 0 },
+  lockedBalance: { type: Number, default: 0 }, 
+  currency: { type: String, default: 'TZS' }
+}
+
 });
 
 ShopSchema.set('toJSON', {
