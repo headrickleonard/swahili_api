@@ -1,199 +1,151 @@
 const Order = require('../models/Order');
 const notificationService = require('../services/notificationService');
-const User = require('../models/User');
+const { User } = require('../models/User');
 const crypto = require('crypto');
-
+const PaymentService = require('../services/paymentService');
 /**
  * Handle ZenoPay payment webhook callbacks
  * This endpoint receives payment status updates from ZenoPay SDK
  */
 exports.handleZenopayCallback = async (req, res) => {
     try {
-        const {
-            order_id,
-            status,
-            payment_status,
-            reference,
-            amount,
-            phone
-        } = req.body;
+        console.log('🔔 WEBHOOK RECEIVED');
+        console.log('📋 HEADERS:', JSON.stringify(req.headers, null, 2));
+        console.log('📋 RAW HEADERS:', req.rawHeaders);
+        console.log('📦 BODY:', JSON.stringify(req.body, null, 2));
 
-        // Validate required fields
-        if (!order_id) {
-            console.error('Missing order_id in webhook payload');
-            return res.status(400).json({
-                success: false,
-                message: 'Missing order_id'
-            });
+        const apiKey = req.headers['x-api-key'];
+
+        // Check if API key is present
+        if (apiKey) {
+            // Great! ZenoPay finally sent it
+            if (apiKey !== process.env.ZENOPAY_API_KEY) {
+                console.error('🚫 Invalid API key');
+                return res.status(401).json({ error: 'Unauthorized' });
+            }
+            console.log('✅ API key verified');
+        } else {
+            // No API key - fall back to API verification
+            console.warn('⚠️ No x-api-key header received (SDK issue?)');
+            console.warn('⚠️ Will verify with ZenoPay API instead');
         }
 
-        // Find the order by transaction ID
+        const { order_id, payment_status, reference } = req.body;
+
+        if (!order_id) {
+            return res.status(400).json({ message: 'Missing order_id' });
+        }
+
         const order = await Order.findOne({
             'paymentDetails.transactionId': order_id
         }).populate('user shop');
 
         if (!order) {
-            console.error(`Order not found for transaction ID: ${order_id}`);
             return res.status(200).json({
-                success: false,
+                status: 'received',
                 message: 'Order not found'
             });
         }
 
-        // Determine the status
-        const paymentStatusValue = payment_status || status;
+        // ✅ ALWAYS verify with API (regardless of header presence)
+        console.log('🔍 Verifying with ZenoPay API...');
+        const verifyResult = await PaymentService.checkPaymentStatus(order_id);
+        const actualStatus = verifyResult.message?.payment_status;
 
-        // Map ZenoPay status to your order status
-        let newPaymentStatus;
-        let newOrderStatus;
-        let notificationMessage;
-
-        switch (paymentStatusValue?.toUpperCase()) {
-            case 'COMPLETED':
-            case 'SUCCESS':
-            case 'SUCCESSFUL':
-                newPaymentStatus = 'completed';
-                newOrderStatus = 'pending';
-                notificationMessage = {
-                    buyer: `Payment confirmed for order #${order.orderNumber}! Your order is being processed.`,
-                    shop: `Payment received for order #${order.orderNumber}. Please prepare the items for shipping.`
-                };
-                console.log('✅ Payment successful');
-                break;
-
-            case 'FAILED':
-            case 'FAILURE':
-                newPaymentStatus = 'failed';
-                newOrderStatus = 'cancelled';
-                notificationMessage = {
-                    buyer: `Payment failed for order #${order.orderNumber}. Please try again or contact support.`,
-                    shop: `Payment failed for order #${order.orderNumber}.`
-                };
-                console.log('❌ Payment failed');
-                break;
-
-            case 'PENDING':
-            case 'PROCESSING':
-                newPaymentStatus = 'pending';
-                newOrderStatus = 'pending_payment';
-                notificationMessage = null;
-                break;
-
-            default:
-                newPaymentStatus = paymentStatusValue?.toLowerCase() || 'unknown';
-                newOrderStatus = order.status;
-                notificationMessage = null;
+        if (actualStatus !== 'COMPLETED') {
+            console.warn(`⚠️ Payment not completed. Status: ${actualStatus}`);
+            return res.status(200).json({
+                status: 'received',
+                message: 'Payment not completed'
+            });
         }
 
-        // Update order with payment details
-        const previousStatus = order.paymentStatus;
-        order.paymentStatus = newPaymentStatus;
-        order.status = newOrderStatus;
-        order.paymentDetails.status = newPaymentStatus;
-        order.paymentDetails.reference = reference || order.paymentDetails.reference;
-
-        if (newPaymentStatus === 'completed') {
-            order.paymentDetails.completedAt = new Date();
+        // Prevent duplicate processing
+        if (order.paymentStatus === 'completed') {
+            return res.status(200).json({
+                status: 'received',
+                message: 'Already processed'
+            });
         }
 
-        // Add callback metadata
-        order.paymentDetails.lastCallbackAt = new Date();
-        order.paymentDetails.callbackData = {
-            status: paymentStatusValue,
-            amount,
-            phone,
-            receivedAt: new Date()
-        };
+        console.log('✅ Payment verified - updating order');
 
-        // Save the updated order
+        // Update order
+        order.paymentStatus = 'completed';
+        order.status = 'pending';
+        order.paymentDetails.status = 'completed';
+        order.paymentDetails.reference = reference;
+        order.paymentDetails.completedAt = new Date();
         await order.save();
 
-        console.log(`✅ Order ${order.orderNumber} updated: ${previousStatus} → ${newPaymentStatus}`);
+        console.log(`✅ Order ${order.orderNumber} completed`);
+        
+        try {
+            let buyer = order.user;
+            let shopOwner = order.shop;
 
-        // Send notifications if status changed to completed or failed
-        if (notificationMessage) {
-            const notifications = [];
-
-            try {
-                // FIXED: Check if order.user is already populated or just an ID
-                let buyer = order.user;
-                let shopOwner = order.shop;
-
-                // If they're not populated (just IDs), fetch them
-                if (!buyer?.username) {
-                    buyer = await User.findById(order.user);
-                }
-                if (!shopOwner?.username) {
-                    shopOwner = await User.findById(order.shop);
-                }
-
-                // Notify buyer
-                if (buyer) {
-                    notifications.push(
-                        notificationService.createPersistentNotification(
-                            buyer._id,
-                            notificationMessage.buyer,
-                            order._id
-                        )
-                    );
-
-                    if (buyer.expoPushToken) {
-                        notifications.push(
-                            notificationService.sendPushNotification(
-                                buyer.expoPushToken,
-                                notificationMessage.buyer
-                            )
-                        );
-                    }
-                }
-
-                // Notify shop owner
-                if (shopOwner) {
-                    notifications.push(
-                        notificationService.createPersistentNotification(
-                            shopOwner._id,
-                            notificationMessage.shop,
-                            order._id
-                        )
-                    );
-
-                    if (shopOwner.expoPushToken) {
-                        notifications.push(
-                            notificationService.sendPushNotification(
-                                shopOwner.expoPushToken,
-                                notificationMessage.shop
-                            )
-                        );
-                    }
-                }
-
-                // Execute all notifications concurrently
-                await Promise.allSettled(notifications);
-                console.log('✅ Notifications sent');
-            } catch (notifError) {
-                console.error('Error sending notifications:', notifError);
-                // Don't fail the webhook because of notification errors
+            if (!buyer?.username) {
+                buyer = await User.findById(order.user);
             }
+            if (!shopOwner?.username) {
+                shopOwner = await User.findById(order.shop);
+            }
+
+            const notifications = [];
+            const notificationMessages = {
+                buyer: `Payment confirmed for order #${order.orderNumber}! Your order is being processed.`,
+                shop: `Payment received for order #${order.orderNumber}. Please prepare the items for shipping.`
+            };
+
+            if (buyer) {
+                notifications.push(
+                    notificationService.createPersistentNotification(
+                        buyer._id,
+                        notificationMessages.buyer,
+                        order._id
+                    )
+                );
+
+                if (buyer.expoPushToken) {
+                    notifications.push(
+                        notificationService.sendPushNotification(
+                            buyer.expoPushToken,
+                            notificationMessages.buyer
+                        )
+                    );
+                }
+            }
+
+            if (shopOwner) {
+                notifications.push(
+                    notificationService.createPersistentNotification(
+                        shopOwner._id,
+                        notificationMessages.shop,
+                        order._id
+                    )
+                );
+
+                if (shopOwner.expoPushToken) {
+                    notifications.push(
+                        notificationService.sendPushNotification(
+                            shopOwner.expoPushToken,
+                            notificationMessages.shop
+                        )
+                    );
+                }
+            }
+
+            await Promise.allSettled(notifications);
+            console.log('✅ Notifications sent');
+        } catch (notifError) {
+            console.error('Error sending notifications:', notifError);
         }
 
-        // Respond with 200 OK
-        res.status(200).json({
-            success: true,
-            message: 'Callback processed successfully',
-            order_id: order_id,
-            order_number: order.orderNumber,
-            payment_status: newPaymentStatus
-        });
+        res.status(200).json({ status: 'received' });
 
     } catch (error) {
-        console.error('❌ Error processing ZenoPay callback:', error);
-
-        // Still return 200 to prevent ZenoPay from retrying
-        res.status(200).json({
-            success: false,
-            message: 'Callback received but processing failed',
-            error: error.message
-        });
+        console.error('❌ Error:', error);
+        res.status(200).json({ status: 'received', error: error.message });
     }
 };
 

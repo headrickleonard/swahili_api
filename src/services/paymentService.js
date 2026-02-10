@@ -19,9 +19,6 @@ class PaymentService {
         customerPhoneNumber: orderDetails.shippingAddress.phone,
         callbackURL: process.env.ZENOPAY_CALLBACK_URL,
       };
-      console.log("paymentOptions", paymentOptions);
-      console.log("accountID:", this.zenoPay.accountID);
-      console.log("API_Key:", this.zenoPay.apiKey);
       const result = await this.zenoPay.Pay(paymentOptions);
       return result;
     } catch (error) {

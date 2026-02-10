@@ -127,14 +127,14 @@ exports.createOrder = async (req, res) => {
       }
     );
 
-      // Update user's orders
-      await User.findByIdAndUpdate(
-        userId,
-        { $push: { orders: order._id } }
-      );
+    // Update user's orders
+    await User.findByIdAndUpdate(
+      userId,
+      { $push: { orders: order._id } }
+    );
 
-      // Create notification for shop owner
-      const notificationMessage = `New order #${order.orderNumber} for ${product.name}`;
+    // Create notification for shop owner
+    const notificationMessage = `New order #${order.orderNumber} for ${product.name}`;
     // Create notifications for both shop owner and buyer
     const orderNotifications = {
       shop: {
@@ -153,12 +153,12 @@ exports.createOrder = async (req, res) => {
       User.findById(userId)
     ]);
 
-      // Create persistent notification
-      await notificationService.createPersistentNotification(
-        product.shop._id,
-        notificationMessage,
-        order._id
-      );
+    // Create persistent notification
+    await notificationService.createPersistentNotification(
+      product.shop._id,
+      notificationMessage,
+      order._id
+    );
     // Create persistent notifications for both users
     await Promise.all([
       notificationService.createPersistentNotification(
@@ -346,10 +346,10 @@ exports.updateOrderStatus = async (req, res) => {
       });
     }
 
-    // Find the order
     const order = await Order.findById(orderId)
-      .populate('shop', 'name')
-      .populate('items.product', 'name image price');
+      .populate('shop', 'name owner') 
+      .populate('items.product', 'name image price')
+      .populate('user', 'username email');
 
     if (!order) {
       return res.status(404).json({
@@ -359,10 +359,15 @@ exports.updateOrderStatus = async (req, res) => {
       });
     }
 
+    console.log('🔍 Order shop owner:', order.shop.owner);
+    console.log('🔍 Current user:', req.user._id);
+
     // Check authorization (only shop owner or admin can update status)
     const isShopOwner = order.shop.owner.equals(req.user._id);
     const isAdmin = req.user.userType === 'ADMIN';
+    
     if (!isShopOwner && !isAdmin) {
+      console.error('❌ Not authorized - shop owner:', order.shop.owner, 'user:', req.user._id);
       return res.status(403).json({
         success: false,
         data: null,
@@ -370,12 +375,14 @@ exports.updateOrderStatus = async (req, res) => {
       });
     }
 
+    console.log('✅ Authorization check passed');
+
     // Validate status transition
     if (!isValidStatusTransition(order.status, status)) {
       return res.status(400).json({
         success: false,
         data: null,
-        errors: [`Invalid status transition from ${order.status} to ${status}`]
+        errors: [`Cannot change status from ${order.status} to ${status}`]
       });
     }
 
@@ -402,6 +409,22 @@ exports.updateOrderStatus = async (req, res) => {
           { $inc: { stock: item.quantity } }
         );
       }));
+      
+      console.log('📦 Stock restored for cancelled order');
+    } else if (status === 'delivered' && order.status !== 'delivered') {
+      // Credit shop wallet when order is delivered
+      const shop = await Shop.findById(order.shop._id);
+      if (shop) {
+        if (!shop.wallet) {
+          shop.wallet = { currentBalance: 0, lockedBalance: 0 };
+        }
+        const orderRevenue = order.amounts.subtotal || order.amounts.total;
+        shop.wallet.currentBalance += orderRevenue;
+        shop.metrics.totalRevenue = (shop.metrics.totalRevenue || 0) + orderRevenue;
+        await shop.save();
+        
+        console.log(`💰 Credited ${orderRevenue} to shop wallet`);
+      }
     }
 
     // Update the order
@@ -412,11 +435,33 @@ exports.updateOrderStatus = async (req, res) => {
     ).populate('shop', 'name')
       .populate('items.product', 'name image price')
       .populate('statusHistory.updatedBy', 'username');
-    // .populate('items.product', 'name image price')
-    // .populate('statusHistory.updatedBy', 'username');
 
-    // Send notification to user (you can implement this based on your notification system)
-    // await notifyUser(order.user, `Your order status has been updated to ${status}`);
+    // Send notification to customer about status change
+    const statusMessages = {
+      processing: `Your order #${order.orderNumber} is being processed`,
+      shipped: `Your order #${order.orderNumber} has been shipped!`,
+      delivered: `Your order #${order.orderNumber} has been delivered`,
+      cancelled: `Your order #${order.orderNumber} has been cancelled`
+    };
+
+    if (statusMessages[status]) {
+      await notificationService.createPersistentNotification(
+        order.user._id,
+        statusMessages[status],
+        order._id
+      );
+      
+      // Send push notification if user has token
+      const buyer = await User.findById(order.user._id);
+      if (buyer?.expoPushToken) {
+        await notificationService.sendPushNotification(
+          buyer.expoPushToken,
+          statusMessages[status]
+        );
+      }
+    }
+
+    console.log(`✅ Order ${order.orderNumber} status updated: ${order.status} → ${status}`);
 
     res.json({
       success: true,
@@ -425,6 +470,7 @@ exports.updateOrderStatus = async (req, res) => {
     });
 
   } catch (err) {
+    console.error('❌ Error updating order status:', err);
     res.status(500).json({
       success: false,
       data: null,
