@@ -190,3 +190,35 @@ exports.updateWithdrawalStatus = async (req, res) => {
         });
     }
 };
+
+exports.getWalletBalance = async (req, res) => {
+    try {
+        const userId = req.user._id;
+
+        // Find the shop owned by this user
+        // We only project the wallet field to keep the response lean
+        const shop = await Shop.findOne({ owner: userId }).select('wallet');
+
+        if (!shop) {
+            return res.status(404).json({
+                success: false,
+                errors: ['Shop not found for this user']
+            });
+        }
+
+        // Return the wallet data
+        res.status(200).json({
+            success: true,
+            data: {
+                wallet: shop.wallet
+            }
+        });
+
+    } catch (error) {
+        console.error('Get Wallet Balance Error:', error);
+        res.status(500).json({
+            success: false,
+            errors: ['Server error while fetching wallet balance']
+        });
+    }
+};
