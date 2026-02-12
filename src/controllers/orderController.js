@@ -139,7 +139,7 @@ exports.createOrder = async (req, res) => {
     const orderNotifications = {
       shop: {
         message: `New order #${order.orderNumber} for ${product.name}`,
-        userId: product.shop.owner // ✅ FIXED: Use shop.owner, not shop._id
+        userId: product.shop.owner 
       },
       buyer: {
         message: `Order #${order.orderNumber} placed successfully! We'll notify you about updates.`,
@@ -149,7 +149,7 @@ exports.createOrder = async (req, res) => {
 
     // ✅ FIXED: Fetch the correct users
     const [shopOwner, buyer] = await Promise.all([
-      User.findById(product.shop.owner).select('username email expoPushToken'), // Get shop owner
+      User.findById(product.shop.owner).select('username email expoPushToken'), 
       User.findById(userId).select('username email expoPushToken')
     ]);
 
@@ -250,7 +250,10 @@ exports.getOrderById = async (req, res) => {
 
     const order = await Order.findById(id)
       .populate('user', 'name email')
-      .populate('shop', 'name email')
+      .populate({
+        path: 'shop',
+        select: 'name email owner'
+      })
       .populate('items.product', 'name image price');
 
     if (!order) {
@@ -261,8 +264,10 @@ exports.getOrderById = async (req, res) => {
       });
     }
 
-    // Check if the user is authorized to view this order
-    if (order.user._id.toString() !== req.user._id.toString()) {
+    const isBuyer = order.user._id.toString() === req.user._id.toString();
+    const isShopOwner = order.shop?.owner?.toString() === req.user._id.toString();
+
+    if (!isBuyer && !isShopOwner) {
       return res.status(403).json({
         success: false,
         data: null,
