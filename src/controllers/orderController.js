@@ -35,9 +35,12 @@ exports.createOrder = async (req, res) => {
       });
     }
 
-    // Find product and check availability
+    // ✅ FIXED: Populate shop with owner field
     const product = await Product.findById(productId)
-      .populate('shop', 'name email')
+      .populate({
+        path: 'shop',
+        select: 'name email owner'
+      })
       .populate('category', 'name');
 
     if (!product) {
@@ -59,7 +62,6 @@ exports.createOrder = async (req, res) => {
 
     // Calculate total amount
     const subtotal = product.price * quantity;
-    // const shippingCost = 0;
     const totalAmount = subtotal;
 
     // Prepare order data
@@ -108,7 +110,7 @@ exports.createOrder = async (req, res) => {
       orderData.paymentDetails = {
         transactionId: paymentResult.message.order_id,
         provider: 'zenopay',
-        status: 'pending', // Set initial status as pending
+        status: 'pending',
         message: paymentResult.message.message,
         initiatedAt: new Date()
       };
@@ -133,13 +135,11 @@ exports.createOrder = async (req, res) => {
       { $push: { orders: order._id } }
     );
 
-    // Create notification for shop owner
-    const notificationMessage = `New order #${order.orderNumber} for ${product.name}`;
     // Create notifications for both shop owner and buyer
     const orderNotifications = {
       shop: {
         message: `New order #${order.orderNumber} for ${product.name}`,
-        userId: product.shop._id
+        userId: product.shop.owner // ✅ FIXED: Use shop.owner, not shop._id
       },
       buyer: {
         message: `Order #${order.orderNumber} placed successfully! We'll notify you about updates.`,
@@ -147,18 +147,12 @@ exports.createOrder = async (req, res) => {
       }
     };
 
-    // Get both users' details for push notifications
+    // ✅ FIXED: Fetch the correct users
     const [shopOwner, buyer] = await Promise.all([
-      User.findById(product.shop._id),
-      User.findById(userId)
+      User.findById(product.shop.owner).select('username email expoPushToken'), // Get shop owner
+      User.findById(userId).select('username email expoPushToken')
     ]);
 
-    // Create persistent notification
-    await notificationService.createPersistentNotification(
-      product.shop._id,
-      notificationMessage,
-      order._id
-    );
     // Create persistent notifications for both users
     await Promise.all([
       notificationService.createPersistentNotification(
@@ -177,6 +171,7 @@ exports.createOrder = async (req, res) => {
     const pushNotifications = [];
 
     if (shopOwner?.expoPushToken) {
+      console.log('📱 Sending push to shop owner:', shopOwner.username);
       pushNotifications.push(
         notificationService.sendPushNotification(
           shopOwner.expoPushToken,
@@ -186,6 +181,7 @@ exports.createOrder = async (req, res) => {
     }
 
     if (buyer?.expoPushToken) {
+      console.log('📱 Sending push to buyer:', buyer.username);
       pushNotifications.push(
         notificationService.sendPushNotification(
           buyer.expoPushToken,
@@ -347,7 +343,7 @@ exports.updateOrderStatus = async (req, res) => {
     }
 
     const order = await Order.findById(orderId)
-      .populate('shop', 'name owner') 
+      .populate('shop', 'name owner')
       .populate('items.product', 'name image price')
       .populate('user', 'username email');
 
@@ -365,7 +361,7 @@ exports.updateOrderStatus = async (req, res) => {
     // Check authorization (only shop owner or admin can update status)
     const isShopOwner = order.shop.owner.equals(req.user._id);
     const isAdmin = req.user.userType === 'ADMIN';
-    
+
     if (!isShopOwner && !isAdmin) {
       console.error('❌ Not authorized - shop owner:', order.shop.owner, 'user:', req.user._id);
       return res.status(403).json({
@@ -409,7 +405,7 @@ exports.updateOrderStatus = async (req, res) => {
           { $inc: { stock: item.quantity } }
         );
       }));
-      
+
       console.log('📦 Stock restored for cancelled order');
     } else if (status === 'delivered' && order.status !== 'delivered') {
       // Credit shop wallet when order is delivered
@@ -422,7 +418,7 @@ exports.updateOrderStatus = async (req, res) => {
         shop.wallet.currentBalance += orderRevenue;
         shop.metrics.totalRevenue = (shop.metrics.totalRevenue || 0) + orderRevenue;
         await shop.save();
-        
+
         console.log(`💰 Credited ${orderRevenue} to shop wallet`);
       }
     }
@@ -450,7 +446,7 @@ exports.updateOrderStatus = async (req, res) => {
         statusMessages[status],
         order._id
       );
-      
+
       // Send push notification if user has token
       const buyer = await User.findById(order.user._id);
       if (buyer?.expoPushToken) {
