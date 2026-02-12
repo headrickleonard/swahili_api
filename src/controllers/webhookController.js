@@ -3,6 +3,7 @@ const notificationService = require('../services/notificationService');
 const { User } = require('../models/User');
 const crypto = require('crypto');
 const PaymentService = require('../services/paymentService');
+
 /**
  * Handle ZenoPay payment webhook callbacks
  * This endpoint receives payment status updates from ZenoPay SDK
@@ -36,9 +37,18 @@ exports.handleZenopayCallback = async (req, res) => {
             return res.status(400).json({ message: 'Missing order_id' });
         }
 
+        // ✅ FIXED: Properly populate shop owner
         const order = await Order.findOne({
             'paymentDetails.transactionId': order_id
-        }).populate('user shop');
+        })
+        .populate('user', 'username email expoPushToken')
+        .populate({
+            path: 'shop',
+            populate: {
+                path: 'owner',
+                select: 'username email expoPushToken'
+            }
+        });
 
         if (!order) {
             return res.status(200).json({
@@ -81,14 +91,23 @@ exports.handleZenopayCallback = async (req, res) => {
         console.log(`✅ Order ${order.orderNumber} completed`);
         
         try {
+            // ✅ FIXED: Get shop owner from shop.owner
             let buyer = order.user;
-            let shopOwner = order.shop;
+            let shopOwner = order.shop?.owner;
 
-            if (!buyer?.username) {
-                buyer = await User.findById(order.user);
+            // Re-fetch if not fully populated
+            if (!buyer?.username || !buyer?.expoPushToken) {
+                buyer = await User.findById(order.user)
+                    .select('username email expoPushToken');
             }
-            if (!shopOwner?.username) {
-                shopOwner = await User.findById(order.shop);
+            
+            if (!shopOwner?.username || !shopOwner?.expoPushToken) {
+                // Get shop owner ID from the shop
+                const shopOwnerId = order.shop?.owner?._id || order.shop?.owner;
+                if (shopOwnerId) {
+                    shopOwner = await User.findById(shopOwnerId)
+                        .select('username email expoPushToken');
+                }
             }
 
             const notifications = [];
@@ -107,6 +126,7 @@ exports.handleZenopayCallback = async (req, res) => {
                 );
 
                 if (buyer.expoPushToken) {
+                    console.log('📱 Sending push to buyer:', buyer.username);
                     notifications.push(
                         notificationService.sendPushNotification(
                             buyer.expoPushToken,
@@ -126,13 +146,18 @@ exports.handleZenopayCallback = async (req, res) => {
                 );
 
                 if (shopOwner.expoPushToken) {
+                    console.log('📱 Sending push to shop owner:', shopOwner.username);
                     notifications.push(
                         notificationService.sendPushNotification(
                             shopOwner.expoPushToken,
                             notificationMessages.shop
                         )
                     );
+                } else {
+                    console.warn('⚠️ Shop owner has no expoPushToken');
                 }
+            } else {
+                console.warn('⚠️ Shop owner not found');
             }
 
             await Promise.allSettled(notifications);
