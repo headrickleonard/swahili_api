@@ -20,7 +20,7 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
-// Add bulk mark as read
+//  bulk mark as read
 router.post('/mark-all-read', auth, async (req, res) => {
   try {
     await Notification.updateMany(
@@ -75,5 +75,36 @@ router.patch('/:notificationId/read', auth, async (req, res) => {
     });
   }
 });
+
+// Delete a notification
+router.delete('/:notificationId', auth, async (req, res) => {
+  try {
+    const notification = await Notification.findOneAndDelete({
+      _id: req.params.notificationId,
+      recipient: req.user._id 
+    });
+
+    if (!notification) {
+      return res.status(404).json({
+        success: false,
+        errors: ['Notification not found'],
+        data: null
+      });
+    }
+
+    res.json({
+      success: true,
+      data: { message: 'Notification deleted successfully' },
+      errors: []
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      errors: [error.message],
+      data: null
+    });
+  }
+});
+
 
 module.exports = router;
